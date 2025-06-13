@@ -197,7 +197,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             ]);
 
         } catch (PDOException $err) {
-            echo "error:" . $err->getMessage();
+            
             exit;
         }
 
@@ -232,7 +232,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 }
             }
             catch (PDOException $err) {
-                echo "error:" . $err->getMessage();
+                
             }
     }
     else {
