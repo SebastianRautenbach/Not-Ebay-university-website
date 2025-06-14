@@ -1,7 +1,9 @@
-<?php 
+<?php
+
 session_start();
 require 'config/dbConfig.php';
 require 'config/imageFileTypes.php';
+require 'config/listingCategories.php';
 
 if (!isset($_SESSION["user_id"])) {
     header("Location: ?q=login");
@@ -9,7 +11,7 @@ if (!isset($_SESSION["user_id"])) {
 }
 
 $listing_id = filter_input(INPUT_GET, 'id');
-if ($listing_id === false || $listing_id === null) {   
+if ($listing_id === false || $listing_id === null) {
     http_response_code(400);
     echo "Invalid listing category.";
     exit;
@@ -30,17 +32,17 @@ $upload_dir = 'upload/';
 
 $stmt = $conn->prepare("SELECT * FROM listings WHERE id =?");
 $stmt->execute([$listing_id]);
-$listing_information = $stmt->fetch();
+$listingInfo = $stmt->fetch();
 
-$stmt = $conn->prepare("SELECT * FROM users WHERE id =?" );
+$stmt = $conn->prepare("SELECT * FROM users WHERE id =?");
 $stmt->execute([$_SESSION['user_id']]);
 $user = $stmt->fetch();
 
 // Naughty naughty
-if($listing_information['sellerID']!== $user_id && $user['role']!== 'ADMIN') {
- http_response_code(403);
- echo "user isnt verified";
- exit;
+if ($listingInfo['sellerID'] !== $user_id && $user['role'] !== 'ADMIN') {
+    http_response_code(403);
+    echo "user isnt verified";
+    exit;
 }
 
 
@@ -50,134 +52,107 @@ $stmt->execute([$listing_id]);
 $listing_images = $stmt->fetchAll();
 
 
-$location_parts = explode(',', $listing_information['location']);
-$street_address_extracted_field = trim($location_parts[0]);
-$suburb_extracted_field = trim($location_parts[1]);
-$city_extracted_field = trim($location_parts[2]);
-$postal_code_extracted_field = trim($location_parts[3]);
+$fLocationParts = explode(',', $listingInfo['location']);
+$fStreetAddress = trim($fLocationParts[0]);
+$fSuburb = trim($fLocationParts[1]);
+$fCity = trim($fLocationParts[2]);
+$fPostalCode = trim($fLocationParts[3]);
 
 $fmain_image = '';
 $fextra_images = [];
 
 foreach ($listing_images as $image) {
- if ($image['image_type'] === 'main') {
- $fmain_image = $image['image_path'];
- } else {
- $fextra_images[] = $image['image_path'];
- }
+    if ($image['image_type'] === 'main') {
+        $fmain_image = $image['image_path'];
+    } else {
+        $fextra_images[] = $image['image_path'];
+    }
 }
 
-$can_proceed = true;
+$can_upload = true;
 $err_message = "";
 
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $listing_title = trim($_POST["product_title"]);
-    $listing_description  = trim($_POST["product_description"]);
-    $category = trim($_POST["Category"]);
-    $product_condition = trim($_POST["product_condition"]);
-    $product_status = trim($_POST["product_status"]);
-    $main_image = $_FILES["product_image"];
-    $extra_images = $_FILES["product_images"];
 
-    $city_extracted_field = str_replace(',', '', filter_var(trim($_POST["City"]), 
-    FILTER_SANITIZE_SPECIAL_CHARS));
-    $street_address_extracted_field = str_replace(',', '', filter_var(trim($_POST["Street_Address"]), 
-    FILTER_SANITIZE_SPECIAL_CHARS));
-    $postal_code_extracted_field = str_replace(',', '', filter_var(trim($_POST["Postal_Code"]),
-     FILTER_SANITIZE_SPECIAL_CHARS));
-    $suburb_extracted_field = str_replace(',', '', filter_var(trim($_POST["Suburb"]), 
-    FILTER_SANITIZE_SPECIAL_CHARS));
+    $productTitle = trim($_POST["productTitle"]);
+    $productDescription = trim($_POST["productDescription"]);
+    $productQuantity = trim($_POST["productQuantity"]);
+    $productPrice = trim($_POST["productPrice"]);
+    $productCategory = trim($_POST["productCategory"]);
+    $productStatus = trim($_POST["productStatus"]);
+    $productCondition = trim($_POST["productCondition"]);
+
+    // images
+
+    $goingToChangeMainImage = false;
+    $goingToChangeExtraImages = false;
+
+    $mainImage = $_FILES["mainImage"];
+    $extraImages = rearange_files($_FILES["extraImages"]);
+
+    if ($mainImage['error'] === UPLOAD_ERR_OK && $mainImage['size'] > 0) {
+        $goingToChangeMainImage = true;
+    }
+
+    foreach ($extraImages as $image) { // as son as one image is invalid we just break away
+        if ($image['error'] === UPLOAD_ERR_OK && $image['size'] > 0) {
+            $goingToChangeExtraImages = true;
+            break;
+        }
+    }
+
+    if ($goingToChangeMainImage) {
+        if (isset($mainImage["size"]) && $mainImage["size"] > 500000) {
+            // file too big
+            $can_upload = false;
+            $err_message = "main file too big";
+        }
+
+        if (isset($mainImage["mime"]) && !in_array($mainImage["mime"], $image_types)) {
+            // file not correct type
+            $can_upload = false;
+            $err_message = "main file not correct type";
+        }
+    }
+
+    if ($goingToChangeExtraImages) {
+        foreach ($extraImages as $extraImage) {
+            if (isset($extraImage["size"]) && $extraImage["size"] > 500000) {
+                // file too big
+                $can_upload = false;
+                $err_message = "extra file too big";
+            }
+
+            if (isset($extraImage["mime"]) && !in_array($extraImage["mime"], $image_types)) {
+                // file not correct type
+                $can_upload = false;
+                $err_message = "extra file not correct type";
+            }
+        }
+    }
+
+    $City = str_replace(',', '', filter_var(
+        trim($_POST["City"]),
+        FILTER_SANITIZE_SPECIAL_CHARS
+    ));
+    $StreetAddress = str_replace(',', '', filter_var(
+        trim($_POST["streetAddress"]),
+        FILTER_SANITIZE_SPECIAL_CHARS
+    ));
+    $PostalCode = str_replace(',', '', filter_var(
+        trim($_POST["postalCode"]),
+        FILTER_SANITIZE_SPECIAL_CHARS
+    ));
+    $Suburb = str_replace(',', '', filter_var(
+        trim($_POST["Suburb"]),
+        FILTER_SANITIZE_SPECIAL_CHARS
+    ));
 
     // we concat it into one string sperated by commas because this will make for much speedier searches when the database is large in size.
-    $location = "$street_address_extracted_field, $suburb_extracted_field, $city_extracted_field, $postal_code_extracted_field";
+    $location = "$StreetAddress, $Suburb, $City, $PostalCode";
 
-
-    $price = filter_var($_POST["price"], FILTER_VALIDATE_FLOAT);
-    $quantity = filter_var($_POST["quantity"], FILTER_VALIDATE_INT);
-
-
-    if($main_image['error'] === UPLOAD_ERR_OK) {
-        $image_info_error  = getimagesize($main_image['name']);
-        if ($image_info_error  !== false) {
-            if (in_array($image_info_error ['mime'], $image_types)) {
-                // continue as normal
-            }
-            else {
-                $can_proceed = false;
-                $err_message="This isnt a supported image fromat!";
-            }
-        }
-        else {
-            $can_proceed = false;
-            $err_message="Not a valid image file!";
-        }
-    }
-    else {
-        $can_proceed = false;
-        $err_message="Image could not upload!";
-    }
-
-    if(!empty($extra_images)) {
-        foreach($extra_images as $image) {
-        if($image['error'] === UPLOAD_ERR_OK) {
-            $image_info_error  = getimagesize($image['name']);
-            if ($image_info_error  !== false) {
-                if (in_array($image_info_error ['mime'], $image_types)) {
-                    // continue as normal
-                }
-                else {
-                    $can_proceed = false;
-                    $err_message="Not a valid image type!";
-                }
-            }
-            else {
-                $can_proceed = false;
-                $err_message="Not a valid image file!";
-            }
-        }
-        else {
-            $can_proceed = false;
-            $err_message="Image could not upload!";
-        }
-    }
-    }
-
-    
-
-
-
-    $should_change_main_image = false;
-    $should_change_add_images = false;
-
-    if (!empty($main_image['name']) && $can_proceed) {
-        $stmt = $conn->prepare("DELETE FROM listing_images WHERE listing_id = ? AND image_type = ?");
-        $stmt->execute([$listing_id, 'main']);
-        $should_change_main_image = true;
-        echo 'deleted main image';
-    }
-
-    $should_change_add_images = false;
-
-    if (isset($extra_images['name']) && is_array($extra_images['name']) && $can_proceed) {
-        foreach ($extra_images['name'] as $index => $filename) {
-            if (!empty($filename) && $extra_images['error'][$index] === UPLOAD_ERR_OK) {
-                $should_change_add_images = true;
-                break;
-            }
-        }
-    }
-
-    if ($should_change_add_images && $can_proceed) {
-        $stmt = $conn->prepare("DELETE FROM listing_images WHERE listing_id = ? AND image_type = ?");
-        $stmt->execute([$listing_id, 'additional']);
-        $should_change_add_images = true;
-        echo 'deleted add images';
-    }
-
-
-    if($can_proceed)
-    { 
+    if ($can_upload) {
         $stmt = $conn->prepare("UPDATE listings SET 
             listing_title = ?, 
             listing_description = ?, 
@@ -190,53 +165,75 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             WHERE id = ? AND sellerID = ?");
 
         try {
-            $stmt->execute([
-                $listing_title, $listing_description , $quantity , $price,
-                $location, $category, $product_condition, $product_status,
-                $listing_id, $user_id
-            ]);
 
-        } catch (PDOException $err) {
-            
-            exit;
+            $stmt->execute([
+                $productTitle,
+                $productDescription,
+                $productQuantity,
+                $productPrice,
+                $location,
+                $productCategory,
+                $productCondition,
+                $productStatus,
+                $listing_id,
+                $listingInfo['sellerID']
+            ]);
+        } catch (PDOException $e) {
+            $err_message = "Server error, couldnt update your product :(";
+            $can_upload = false;
+        }
+    }
+
+
+    if ($can_upload) {
+        if ($goingToChangeMainImage && move_uploaded_file($mainImage["tmp_name"], $upload_dir . basename($mainImage["name"]))) {
+
+            $stmt = $conn->prepare("DELETE FROM listing_images WHERE listing_id = ? AND image_type = ?");
+            $stmt->execute([$listing_id, 'main']);
+            echo 'deleted main image';
+
+            // uploaded the file B)
+            $stmt = $conn->prepare("INSERT INTO listing_images (listing_id, image_path, image_type) VALUES (?, ?, ?)");
+            try {
+                $stmt->execute([$listing_id, (basename($mainImage["name"])), 'main']);
+            } catch (PDOException $e) {
+                $err_message = "Server error, could not uplload your main image :(";
+                $can_upload = false;
+            }
         }
 
-        $stmt = $conn->prepare("INSERT INTO listing_images (listing_id, image_path, image_type) 
-            VALUES (?, ?, ?)");
-            try {            
-               if($should_change_main_image){ $stmt->execute([
-                    $listing_id, $main_image['name'], 'main'
-                ]);
+        if ($goingToChangeExtraImages) {
 
-                if (!empty($_FILES['product_image']) && $_FILES['product_image']['error'] == UPLOAD_ERR_OK) {
-                     move_uploaded_file($main_image['tmp_name'], $upload_dir . $main_image['name']);
-                     echo "Main image uploaded successfully.";
-                }
-                else {
-                    echo "Error uploading main image.";
-                }}
+            $stmt = $conn->prepare("DELETE FROM listing_images WHERE listing_id = ? AND image_type = ?");
+            $stmt->execute([$listing_id, 'additional']);
+            echo 'deleted add images';
 
-               if($should_change_add_images){if (!empty($_FILES['product_images']) && is_array($_FILES['product_images']['name'])) {
-                    if (isset($extra_images['name']) && is_array($extra_images['name'])) {
-                       foreach ($extra_images['name'] as $index => $image_name) {
-                           if ($image_name) {
-                               $stmt->execute([
-                                    $listing_id, $image_name, 'additional'
-                                    ]);
-                                    move_uploaded_file($extra_images['tmp_name'][$index], $upload_dir . $image_name);
-                                    echo "Additional image $image_name uploaded successfully.";
-                                }
-                            }
-                        }
-                    } 
+
+            foreach ($extraImages as $extraImage) {
+
+                if (move_uploaded_file($extraImage["tmp_name"], $upload_dir . basename($extraImage["name"]))) {
+                    // uploaded the file B)
+
+                    $stmt = $conn->prepare("INSERT INTO listing_images (listing_id, image_path, image_type) VALUES (?, ?, ?)");
+                    try {
+                        $stmt->execute([$listing_id, (basename($extraImage["name"])), 'additional']);
+                    } catch (PDOException $e) {
+                        $err_message = "Server error, could not uplload your extra image :(";
+                        $can_upload = false;
+                    }
+                } else {
+                    $err_message = "Server error, could not uplload your extra image :(";
+                    $can_upload = false;
                 }
             }
-            catch (PDOException $err) {
-                
-            }
+        }
     }
-    else {
-        echo "<div class=\"alert alert-danger\" role=\"alert\">$err_message!</div>";
+
+
+    if (!$can_upload) {
+        echo "<div class='alert alert-danger' role='alert'>$err_message</div>";
+    } else {
+        echo "<div class='alert alert-success' role='alert'>Updated successful!</div>";
     }
 }
 ?>
@@ -244,151 +241,159 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 
 <html>
+
 <head>
     <title>Not EBAY</title>
 </head>
-    <body>
+
+<body>
 
     <?php include 'navbar.php'; ?>
 
-    
-        
-        
-    <form method="POST" action="?q=editListing&id=<?php echo $listing_id ?>" enctype="multipart/form-data" class="container my-5 p-4 border rounded shadow-sm bg-light">
-        <h1 class="mb-4">Edit Product Listing</h1>
+    <div class="card align-items-center">
+        <div class="card-body" style="max-width:80%">
+            <h1 class="card-title">Edit Product</h1>
+            <hr />
+            <form class="row g-3 " method="post" action="?q=editListing&id=<?php echo $listing_id ?>" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="productTitle" class="form-label">Product Title</label>
+                    <input class="form-control" type="text" value="<?php echo htmlspecialchars($listingInfo['listing_title']); ?>" id="productTitle" name="productTitle">
+                </div>
 
-        <div class="mb-3">
-            <label for="product_title" class="form-label">Product Name</label>
-            <input type="text" class="form-control" id="product_title" name="product_title"
-             value="<?php echo htmlspecialchars($listing_information['listing_title']); ?>"required>
-        </div>
+                <div class="mb-3">
+                    <label for="productDescription" class="form-label">Product Description</label>
+                    <textarea class="form-control" id="productDescription" name="productDescription" rows="3"><?php echo htmlspecialchars($listingInfo['listing_description']); ?></textarea>
+                </div>
 
-        <div class="mb-3">
-            <label for="product_description" class="form-label">Description</label>
-            <textarea maxlength="255" class="form-control" id="product_description" name="product_description"
-             rows="3"required><?php echo htmlspecialchars($listing_information['listing_description']); ?></textarea>
-        </div>
+                <div class="mb-3">
+                    <label for="productQuantity" class="form-label">Quantity</label>
+                    <input class="form-control" type="number" id="productQuantity" value="<?php echo (int) htmlspecialchars($listingInfo['quantity']); ?>" name="productQuantity" min="0">
+                </div>
 
-        <div class="mb-3">
-            <label for="quantity" class="form-label">Quantity</label>
-            <input type="number" class="form-control" id="quantity" name="quantity" step="1"  
-            value="<?php echo htmlspecialchars($listing_information['quantity']); ?>"required>
-        </div>
+                <div class="mb-3">
+                    <label for="productPrice" class="form-label">Price</label>
+                    <input class="form-control" type="number" id="productPrice" value="<?php echo htmlspecialchars($listingInfo['price']); ?>" name="productPrice" min="0" step="0.1">
+                </div>
 
-        <div class="mb-3">
-            <label for="price" class="form-label">Price</label>
-            <input type="number" class="form-control" id="price" name="price" step="0.01" 
-            value="<?php echo htmlspecialchars($listing_information['price']);  ?>"required>
-        </div>
+                <div class="mb-3">
+                    <label for="productCategory" class="form-label">Category</label>
+                    <select class="form-select form-select mb-3" id="productCategory" name="productCategory" aria-label=".form-select-lg example">
+                        <option value="" disabled>Select a category</option>
+                        <?php // we do this type of implementation because we want to be able to see what the previous choice was                        
+                        foreach ($gListingCategories as $category) {
+                            $selected = "";
+                            if ($listingInfo['category'] == $category) {
+                                $selected = 'selected';
+                            } else {
+                                $selected = '';
+                            };
+                            echo "<option value=\"$category\" $selected>" . // we loop through our entries from the database and when the category is found we mark it as selected
+                                ucfirst($category) .
+                                "</option>";
+                        }
+                        ?>
+                    </select>
+                </div>
 
-        <h3 class="mt-4 mb-3">Location</h3>
+                <div class="mb-3">
+                    <label for="productStatus" class="form-label">Status</label>
+                    <select class="form-select form-select mb-3" id="productStatus" name="productStatus" aria-label=".form-select-lg example">
+                        <option value="" disabled>Select product Status</option>
+                        <?php // we do this type of implementation because we want to be able to see what the previous choice was                        
+                        foreach (['Available', 'Soldout'] as $status) {
+                            $selected = "";
+                            if ($listingInfo['status'] == $status) {
+                                $selected = 'selected';
+                            } else {
+                                $selected = '';
+                            };
+                            echo "<option value=\"$status\" $selected>" . // we loop through our entries from the database and when the category is found we mark it as selected
+                                ucfirst($status) .
+                                "</option>";
+                        }
+                        ?>
+                    </select>
+                </div>
 
-        <div class="mb-3">
-            <label for="City" class="form-label">City</label>
-            <input type="text" class="form-control" id="City" name="City" required 
-            value="<?php echo htmlspecialchars($city_extracted_field); ?>">
-        </div>
 
-        <div class="mb-3">
-            <label for="Street_Address" class="form-label">Street Address</label>
-            <input type="text" class="form-control" id="Street_Address" name="Street_Address"  
-            value="<?php echo htmlspecialchars($street_address_extracted_field); ?>"required>
-        </div>
+                <div class="mb-3">
+                    <label for="productCondition" class="form-label">Product Condition</label>
+                    <input class="form-control" type="text" value="<?php echo htmlspecialchars($listingInfo['product_condition']); ?>" name="productCondition" id="productCondition">
+                </div>
 
-        <div class="mb-3">
-            <label for="Postal_Code" class="form-label">Postal Code</label>
-            <input type="text" class="form-control" id="Postal_Code" name="Postal_Code"  
-            value="<?php echo htmlspecialchars($postal_code_extracted_field); ?>"required>
-        </div>
+                <hr />
+                <h3 class="card-title">Images</h3> <!-- --------------------------------------------------------- IMAGE UPLOADING -->
+                <hr />
 
-        <div class="mb-3">
-            <label for="Suburb" class="form-label">Suburb</label>
-            <input type="text" class="form-control" id="Suburb" name="Suburb" 
-            value="<?php echo htmlspecialchars($suburb_extracted_field); ?>"required>
-        </div>
+                <div class="mb-3">
+                    <label class="form-label">Current Main Image</label><br>
+                    <?php if (!empty($fmain_image)): ?>
+                        <img
+                            src="/upload/<?php echo htmlspecialchars($fmain_image); ?>"
+                            class="img-thumbnail me-2 mb-2"
+                            style="max-height: 150px;">
+                    <?php endif; ?>
+                </div>
 
-        <div class="mb-3"> Just note that all image changes will delete the previous and use the new uploaded ones </div>
+                <div class="mb-3">
+                    <label for="mainImage" class="form-label">Add Main Image</label>
+                    <input class="form-control" type="file" name="mainImage" id="mainImage" accept="image/*">
+                </div>
 
-        <div class="mb-3">
-            <label class="form-label">Current Main Image</label><br>
-            <?php if ($fmain_image): ?>
-                <img 
-                src="/upload/<?php echo htmlspecialchars($fmain_image); ?>" 
-                alt="Main aawesome Image" class="img-thumbnail" style="max-height: 200px;">
-            <?php else: ?>
-                <p>Please upload an image </p>
-            <?php endif; ?>
-        </div>
-            
-        <div class="mb-3">
-            <label for="product_image" class="form-label">Change Main Product Image</label>
-            <input class="form-control" type="file" id="product_image" name="product_image" accept="image/*"> <!-- we only accpet image formats -->
-        </div>
 
-        <div class="mb-3">
-            <label class="form-label">Current Additional Images</label><br>
-            <?php if (!empty($fextra_images)): ?>
-                <?php foreach ($fextra_images as $img): ?>
-                    <img 
-                    src="/upload/<?php echo htmlspecialchars($img); ?>" 
-                    class="img-thumbnail me-2 mb-2" 
-                    style="max-height: 150px;">
-                <?php endforeach; ?>
-            <?php else: ?>
-                <p>No extra images uploaded.</p>
-            <?php endif; ?>
-        </div>
-            
-        <div class="mb-3">
-            <label for="product_images" class="form-label">
-            Upload Extra Product Images
-            </label>
-            <input class="form-control" type="file" id="product_images" name="product_images[]" accept="image/*" multiple>
-        </div>
-            
-        <div class="mb-3">
-            <label for="Category" class="form-label">Category</label>
-            <select class="form-select" id="Category" name="Category" required>
-                <option value="" disabled>Select a category</option>
-                <?php // we do this type of implementation because we want to be able to see what the previous choice was
-                $categories = ["technology", "software", "clothes", "supplements", "furniture", "tool", "auto", "accessories", "health", "weapon", "other", "etc"];
-                foreach ($categories as $category) {
-                    $selected ="";
-                    if($listing_information['category'] == $category) {$selected= 'selected';} 
-                    else {$selected='';};
-                    echo "<option value=\"$category\" $selected>" . ucfirst($category) . 
-                    "</option>";
-                }
-                ?>
-            </select>
-        </div>
-              
-        <div class="mb-3">
-            <label for="product_condition" class="form-label">Product Condition</label>
-            <input type="text" class="form-control" id="product_condition" name="product_condition" 
-            required 
-            value="<?php echo htmlspecialchars($listing_information['product_condition']); ?>">
-        </div>
-              
-        <div class="mb-4">
-          <label for="product_status" class="form-label">Product State</label>
-          <select class="form-select" id="product_status" name="product_status" required>
-              <option value="" disabled selected>Select product state</option>
-               <?php
-                $categories = ["Available", "Sold-out", "Hidden"];
-                foreach ($categories as $status) {
-                    $selected = "";
-                    if($listing_information['product_status'] == $status) {$selected='selected';} 
-                    else {$selected='';};
-                    echo "<option value=\"$status\" $selected>". ucfirst($status) . 
-                    "</option>";
-                }
-               ?>        
-            </select>
-        </div>
-              
-        <button type="submit" class="btn btn-primary w-100">Update Listing</button>
-    </form>
+                <div class="mb-3">
+                    <label class="form-label">Current Additional Images</label><br>
+                    <?php if (!empty($fextra_images)): ?>
+                        <?php foreach ($fextra_images as $img): ?>
+                            <img
+                                src="/upload/<?php echo htmlspecialchars($img); ?>"
+                                class="img-thumbnail me-2 mb-2"
+                                style="max-height: 150px;">
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
 
-    </body>
+                <div class="mb-3">
+                    <label for="extraImages" class="form-label">Add Extra Images</label>
+                    <input class="form-control" type="file" name="extraImages[]" id="extraImages" accept="image/*" multiple>
+                </div>
+
+                <hr />
+                <h3 class="card-title">Location</h3> <!-- --------------------------------------------------------- LOCATION UPLOADING -->
+                <hr />
+
+                <div class=" mb-3">
+                    <label for="streetAddress" class="form-label" for="location">Street Address</label>
+                    <input class="form-control" type="text" id="streetAddress" value="<?php echo htmlspecialchars($fStreetAddress); ?>" name="streetAddress">
+                </div>
+
+                <div class="mb-3">
+                    <label for="Suburb" class="form-label">Suburb</label>
+                    <input class="form-control" type="text" id="Suburb" value="<?php echo htmlspecialchars($fSuburb); ?>" name="Suburb">
+                </div>
+
+                <div class="mb-3">
+                    <label for="City" class="form-label">City</label>
+                    <input class="form-control" type="text" id="City" value="<?php echo htmlspecialchars($fCity); ?>" name="City">
+                </div>
+
+                <div class="mb-3">
+                    <label for="postalCode" class="form-label">Postal Code</label>
+                    <input class="form-control" type="text" id="postalCode" value="<?php echo htmlspecialchars($fPostalCode); ?>" name="postalCode">
+                </div>
+
+                <div class="mb-3">
+                    <button type="submit" class="btn btn-primary mb-3">Update Product</button>
+                </div>
+
+            </form>
+        </div>
+    </div>
+
+
+    <?php include 'footer.php'; ?>
+
+
+</body>
+
 </html>
